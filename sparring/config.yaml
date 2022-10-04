@@ -1,0 +1,47 @@
+---
+cl_src_dir: /home/stock/ssd/projects/the_matrix/the_matrix/opencl/src/cl_src/
+data_dir: /home/stock/data/Documents/Projects/the_matrix/data_miner/
+cache_dir: /home/stock/data/Documents/Projects/the_matrix/cache/
+reports_dir: /home/stock/data/Documents/Projects/the_matrix/reports/
+report_template_dir: /home/stock/data/Documents/Projects/the_matrix/reports/template/
+db: postgres://postgres:dev@localhost/dev
+exchanges: []
+logs:
+  default:
+    log_path: "."
+    log_opencl: true
+    log_to: Console
+    level: Trace
+    levels:
+      - module: tokio_tungstenite
+        level: Info
+      - module: tungstenite
+        level: Info
+      - module: hyper
+        level: Info
+      - module: want
+        level: Info
+      - module: mio
+        level: Info
+      - module: tracing
+        level: Info
+      - module: azure_storage
+        level: Info
+      - module: rustls
+        level: Info
+    level_colors:
+      error: Red
+      warn: Yellow
+      info: Green
+      debug: White
+      trace: BrightBlack
+    level_colors:
+      error: Red
+      warn: Yellow
+      info: Green
+      debug: White
+      trace: BrightBlack
+iaas:
+  storage_account: ""
+  storage_key: ""
+  the_matrix_db_url: "mysql://'user'@localhost:3306/test"
