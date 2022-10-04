@@ -1,0 +1,3 @@
+[workspace]
+members = ["mouse", "config", "macros", "sparring", "merovingian", "nebuchadnezzar"]
+exclude = [".idea", ".git"]
