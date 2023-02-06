@@ -2,6 +2,7 @@
 cl_src_dir: /home/stock/ssd/projects/the_matrix/the_matrix/opencl/src/cl_src/
 data_dir: /home/stock/data/Documents/Projects/the_matrix/data_miner/
 cache_dir: /home/stock/data/Documents/Projects/the_matrix/cache/
+  #cache_dir: /home/stock/ssd/tmp/
 reports_dir: /home/stock/data/Documents/Projects/the_matrix/reports/
 report_template_dir: /home/stock/data/Documents/Projects/the_matrix/reports/template/
 db: postgres://postgres:dev@localhost/dev
@@ -29,12 +30,6 @@ logs:
         level: Info
       - module: rustls
         level: Info
-    level_colors:
-      error: Red
-      warn: Yellow
-      info: Green
-      debug: White
-      trace: BrightBlack
     level_colors:
       error: Red
       warn: Yellow
