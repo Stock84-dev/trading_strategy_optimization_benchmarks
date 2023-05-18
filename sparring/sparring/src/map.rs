@@ -76,6 +76,7 @@ impl Mapper {
                 top10[max_i] = Pair {
                     params: [timeframe, len, hline, lline],
                     balance: result.balance,
+                    account: Default::default(),
                 };
             }
         }
@@ -120,7 +121,7 @@ impl Mapper {
     }
 
     pub async fn map(&mut self) -> Result<()> {
-        let context = Context::new().await?;
+        let context = Context::new(10).await?;
         let mut elapsed_timeframe_ns = 0;
         let mut elapsed_cache_ns = 0;
         let mut elapsed_compute_ns = 0;

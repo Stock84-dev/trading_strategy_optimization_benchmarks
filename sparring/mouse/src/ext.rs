@@ -373,6 +373,7 @@ where
 {
 }
 
+#[const_trait]
 pub trait SizeOfVal {
     /// Returns the size of the pointed-to value in bytes.
     ///
@@ -382,17 +383,20 @@ pub trait SizeOfVal {
     fn size_of_val(&self) -> usize;
 }
 
+// #[const_trait]
 impl<T: Sized> const SizeOfVal for T {
     fn size_of_val(&self) -> usize {
         std::mem::size_of_val(self)
     }
 }
 
+#[const_trait]
 pub trait StaticSize {
     /// Returns the size of a type in bytes.
     fn size() -> usize;
 }
 
+// #[const_trait]
 impl<T: Sized> const StaticSize for T {
     fn size() -> usize {
         std::mem::size_of::<Self>()

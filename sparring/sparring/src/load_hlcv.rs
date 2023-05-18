@@ -136,7 +136,7 @@ pub async fn load_hlcv(
                 &mut tmp,
                 &mut header.start_ts,
             )
-                .await?;
+            .await?;
             tmp.seek(SeekFrom::Start(0)).await?;
             tmp.write_all(header_slice).await?;
             io::copy(&mut file_reader, &mut tmp).await?;
@@ -163,7 +163,7 @@ pub async fn load_hlcv(
                 &mut file_writer,
                 &mut not_used,
             )
-                .await?;
+            .await?;
             header.end_timestamp_s = end_ts;
             file_writer.seek(SeekFrom::Start(0)).await?;
             file_writer.write_all(header_slice).await?;
@@ -198,7 +198,7 @@ pub async fn load_hlcv_no_file(
         &mut file,
         &mut actual_start_ts,
     )
-        .await?;
+    .await?;
     file.seek(SeekFrom::Start(0)).await?;
     let header = HlcvHeader {
         start_ts: actual_start_ts,
@@ -215,6 +215,7 @@ async fn read_hlcv(
     file: File,
     header: &HlcvHeader,
 ) -> Result<MappedHlcvs> {
+    info!("reading...");
     let offset_len = if start_ts > header.start_ts {
         start_ts as u64 - header.start_ts as u64
     } else {

@@ -1,6 +1,6 @@
 use merovingian::hlcv::Hlcv;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Account {
     pub balance: f32,
     pub entry_price: f32,
@@ -30,6 +30,7 @@ impl Account {
 
     pub fn open_short(&mut self, should_open_short: bool, price: f32, fee: f32) {
         if should_open_short {
+            // println!("open short: {}, {}, {}", should_open_short, price, fee);
             self.balance -= self.balance * fee;
             self.entry_price = -price;
         }
@@ -37,6 +38,7 @@ impl Account {
 
     pub fn close_short(&mut self, should_close_short: bool, price: f32, fee: f32) {
         if should_close_short {
+            // println!("close short: {}, {}, {}", should_close_short, price, fee);
             let entry_price_abs: f32 = self.entry_price.abs();
             let position: f32 = self.balance / self.entry_price;
             self.balance += (price - entry_price_abs) * position + price * position * fee;
@@ -46,12 +48,14 @@ impl Account {
 
     pub fn open_long(&mut self, should_open_long: bool, price: f32, fee: f32) {
         if should_open_long {
+            // println!("open long: {}, {}, {}", should_open_long, price, fee);
             self.balance -= self.balance * fee;
             self.entry_price = price;
         }
     }
     pub fn close_long(&mut self, should_close_long: bool, price: f32, fee: f32) {
         if should_close_long {
+            // println!("close long: {}, {}, {}", should_close_long, price, fee);
             // even tough we know that price is abs we leave it like that so that compiler can easily
             // optimize code
             let entry_price_abs: f32 = self.entry_price.abs();
@@ -105,12 +109,18 @@ impl Account {
 
     pub fn short_stopped(&mut self, stop_price: f32, high: f32) -> bool {
         let should_stop_short = self.entry_price < 0. && high > stop_price;
+        if should_stop_short {
+            // println!("stop");
+        }
         self.market_close_short(should_stop_short, stop_price);
         should_stop_short
     }
 
     pub fn long_stopped(&mut self, stop_price: f32, low: f32) -> bool {
         let should_stop_long = self.entry_price > 0. && low < stop_price;
+        if should_stop_long {
+            // println!("stop");
+        }
         self.market_close_long(should_stop_long, stop_price);
         should_stop_long
     }
@@ -127,6 +137,7 @@ impl Account {
         lline: f32,
     ) {
         let hlcv = unsafe { hlcvs.get_unchecked(i) };
+        // println!("{} {}, {}, {}", prev_rsi, rsi, prev_close, hlcv.close);
         if hlcv.close > prev_close {
             let hline_condition = prev_rsi < hline && rsi >= hline;
             let stop_price = self.entry_price * -(1. + max_risk);
@@ -137,6 +148,10 @@ impl Account {
             self.market_open_short(open_short, hlcv.close);
             self.market_close_long(close_long, hlcv.close);
             self.closed_position(close_position, i);
+            if open_short || close_long || close_position {
+                // println!("{} {}", i, stop_short);
+                // dbg!(&self);
+            }
         } else if hlcv.close < prev_close {
             let lline_condition = prev_rsi >= lline && rsi < lline;
             let stop_price = self.entry_price * (1. - max_risk);
@@ -147,6 +162,10 @@ impl Account {
             self.market_open_long(open_long, hlcv.close);
             self.market_close_short(close_short, hlcv.close);
             self.closed_position(close_position, i);
+            if close_short || open_long || close_position {
+                // println!("{} {}", i, stop_long);
+                // dbg!(&self);
+            }
         } else {
             let stop_short_price = self.entry_price * -(1. + max_risk);
             let stop_long_price = self.entry_price * (1. - max_risk);
@@ -154,6 +173,10 @@ impl Account {
             let stop_long = self.long_stopped(stop_long_price, hlcv.low);
             let close_position = stop_long | stop_short;
             self.closed_position(close_position, i);
+            if close_position {
+                // println!("{} stopped", i);
+                // dbg!(&self);
+            }
         }
     }
 }

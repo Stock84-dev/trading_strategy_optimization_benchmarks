@@ -7,8 +7,46 @@ use ordered_float::OrderedFloat;
 use plotters::backend::BitMapBackend;
 use plotters::prelude::*;
 use std::collections::HashMap;
+use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::time::Instant;
+
+pub fn save_hist(name: &str, hist: &[u32], bucket_size: f32) -> Result<()> {
+    let mut out = String::new();
+    let values = hist
+        .iter()
+        .enumerate()
+        .map(|x| (x.0 as f32 * bucket_size, *x.1 as f32))
+        .for_each(|x| {
+            use std::fmt::Write;
+            writeln!(&mut out, "{:.1}: {}", x.0, x.1);
+        });
+    let mut file = File::create(format!("{}_hist.txt", name))?;
+    use std::io::Write;
+    file.write_all(out.as_bytes())?;
+    Ok(())
+}
+
+pub fn save_pairs(name: &str, pairs: &mut Vec<crate::context::Pair>) -> Result<()> {
+    let mut out = String::new();
+    pairs.sort_by_key(|x| OrderedFloat(x.balance));
+    let values = pairs
+        .iter()
+        // .enumerate()
+        // .map(|x| (x.0 as f32 * bucket_size, *x.1 as f32))
+        .for_each(|x| {
+            use std::fmt::Write;
+            writeln!(
+                &mut out,
+                "{} {} {} {}: {:.1} {}",
+                x.params[0], x.params[1], x.params[2], x.params[3], x.account.balance, x.account.n_trades,
+            );
+        });
+    let mut file = File::create(format!("{}_pairs.txt", name))?;
+    use std::io::Write;
+    file.write_all(out.as_bytes())?;
+    Ok(())
+}
 
 fn plot() -> Result<()> {
     let mut balance = 0.0f32;
@@ -184,5 +222,107 @@ fn plot() -> Result<()> {
         .draw()?;
     dbg!(values);
 
+    Ok(())
+}
+
+pub fn histogram(name: &str, data: &[u32]) -> Result<()> {
+    dbg!(data);
+    let path = format!("{} histogram.png", name);
+    let root = BitMapBackend::new(&path, (1680 / 2, 1050 / 2)).into_drawing_area();
+
+    root.fill(&WHITE)?;
+
+    let mut chart = ChartBuilder::on(&root)
+        .x_label_area_size(35)
+        .y_label_area_size(40)
+        .margin(5)
+        .caption("Histogram Test", ("sans-serif", 50.0))
+        .build_cartesian_2d((0u32..10u32).into_segmented(), 0u32..10u32)?;
+
+    chart
+        .configure_mesh()
+        .disable_x_mesh()
+        .bold_line_style(&WHITE.mix(0.3))
+        .y_desc("Count")
+        .x_desc("Bucket")
+        .axis_desc_style(("sans-serif", 15))
+        .draw()?;
+
+    chart.draw_series(
+        Histogram::vertical(&chart)
+            .style(RED.mix(0.5).filled())
+            .data(data.iter().map(|x: &u32| (*x, 1))),
+    )?;
+
+    // To avoid the IO failure being ignored silently, we manually call the present function
+    root.present().expect("Unable to write result to file, please make sure 'plotters-doc-data' dir exists under current dir");
+
+    Ok(())
+}
+
+pub fn plot_xy(name: &str, values: &[(f32, f32)]) -> Result<()> {
+    let path = format!("{}.png", name);
+    let root = BitMapBackend::new(&path, (1680 / 2, 1050 / 2)).into_drawing_area();
+    root.fill(&WHITE)?;
+    // find min and max values
+    let mut min = values[0].1;
+    let mut max = values[0].1;
+    for value in values {
+        min.min_mut(value.1);
+        max.max_mut(value.1);
+    }
+    let mut chart = ChartBuilder::on(&root)
+        //        .caption("y=x^2", ("sans-serif", 50).into_font())
+        .margin(5u32)
+        .x_label_area_size(30u32)
+        .y_label_area_size(40u32)
+        .build_cartesian_2d(values[0].0..values.last().unwrap().0, min..max)?;
+
+    chart.configure_mesh().y_desc(name).draw()?;
+    chart
+        .draw_series(LineSeries::new(values.iter().cloned(), &RED))?
+        .label(name)
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED));
+
+    chart
+        .configure_series_labels()
+        .background_style(&WHITE.mix(0.8))
+        .border_style(&BLACK)
+        .draw()?;
+    Ok(())
+}
+
+pub fn plot_values(name: &str, values: &[f32]) -> Result<()> {
+    let path = format!("{}.png", name);
+    let root = BitMapBackend::new(&path, (1680 / 2, 1050 / 2)).into_drawing_area();
+    root.fill(&WHITE)?;
+    // find min and max values
+    let mut min = values[0];
+    let mut max = values[0];
+    for value in values {
+        min.min_mut(*value);
+        max.max_mut(*value);
+    }
+    let mut chart = ChartBuilder::on(&root)
+        //        .caption("y=x^2", ("sans-serif", 50).into_font())
+        .margin(5u32)
+        .x_label_area_size(30u32)
+        .y_label_area_size(40u32)
+        .build_cartesian_2d(0.0f32..values.len() as f32, min..max)?;
+
+    chart.configure_mesh().y_desc(name).draw()?;
+    chart
+        .draw_series(LineSeries::new(
+            values.iter().enumerate().map(|x| (x.0 as f32, *x.1)),
+            &RED,
+        ))?
+        .label(name)
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED));
+
+    chart
+        .configure_series_labels()
+        .background_style(&WHITE.mix(0.8))
+        .border_style(&BLACK)
+        .draw()?;
     Ok(())
 }

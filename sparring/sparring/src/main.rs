@@ -6,6 +6,8 @@ mod plot;
 use cmaes::objective_function::Scale;
 use cmaes::{CMAESOptions, PlotOptions};
 use cmaes::{DVector, Mode, ObjectiveFunction};
+use config::CONFIG;
+use half::f16;
 use load_hlcv::load_hlcv;
 use merovingian::hlcv::{Hlcv, MappedHlcvs};
 use mouse::prelude::*;
@@ -24,14 +26,657 @@ use crate::account::Account;
 use crate::context::{convert, Context, Pair};
 
 mod account;
+mod account16;
 mod context;
 pub mod map;
 
+async fn random() -> Result<()> {
+    let mut balances = Vec::new();
+    let mut times = Vec::new();
+    let mut efficiencies = Vec::new();
+    let kind = "random";
+    for i in (1..30000).step_by(1000) {
+        let now = Instant::now();
+        let mut context = Context::new(1).await?;
+        context.n_shards = 1;
+        context.cache_timeframe = true;
+        context.random_search(i);
+        let balance = context
+            .top
+            .lock()
+            .iter()
+            .map(|x| OrderedFloat(x.balance))
+            .max()
+            .unwrap()
+            .0;
+        // context.top.lock()[0].balance = 0.0;
+        let time = now.elapsed().as_secs_f32();
+        balances.push(balance);
+        times.push(time);
+        efficiencies.push(balance / time);
+        plot::save_hist(kind, &context.histogram.lock(), context.bucket_size).unwrap();
+        plot::save_pairs(kind, &mut *context.top.lock()).unwrap();
+    }
+    plot::plot_values(&format!("{} balances", kind), &balances)?;
+    plot::plot_values(&format!("{} times", kind), &times)?;
+    plot::plot_values(&format!("{} efficiencies", kind), &efficiencies)?;
+    Ok(())
+}
+
+async fn bayes() -> Result<()> {
+    let mut balances = Vec::new();
+    let mut times = Vec::new();
+    let mut efficiencies = Vec::new();
+    let kind = "bayes";
+    // 30 000 exec to find max and took 17s
+    for i in (30000..600000).step_by(10000) {
+        let now = Instant::now();
+        let mut context = Context::new(50).await?;
+        context.n_shards = 1;
+        context.cache_timeframe = true;
+        context.bayes_search(i);
+        let balance = context
+            .top
+            .lock()
+            .iter()
+            .map(|x| OrderedFloat(x.balance))
+            .max()
+            .unwrap()
+            .0;
+        // context.top.lock()[0].balance = 0.0;
+        let time = now.elapsed().as_secs_f32();
+        balances.push(balance);
+        times.push(time);
+        efficiencies.push(balance / time);
+        plot::plot_values(&format!("{} balances", kind), &balances)?;
+        plot::plot_values(&format!("{} times", kind), &times)?;
+        plot::plot_values(&format!("{} efficiencies", kind), &efficiencies)?;
+        plot::save_hist(kind, &context.histogram.lock(), context.bucket_size).unwrap();
+        plot::save_pairs(kind, &mut *context.top.lock()).unwrap();
+    }
+    Ok(())
+}
+
+async fn ga() -> Result<()> {
+    for cm in (1..=10).map(|x| x as f64 / 10.) {
+        for pop in (700..7000).step_by(100).take(1) {
+            let mut balances = Vec::new();
+            let mut times = Vec::new();
+            let mut efficiencies = Vec::new();
+            let kind = format!("ga {cm}cm");
+            // let kind = format!("gafull {pop}pop");
+            // 21 000 exec (700pop, 30gen) to find max and took 7.5s
+            for gen in (30..300).step_by(10) {
+                let now = Instant::now();
+                let mut context = Context::new(50).await?;
+                context.n_shards = 1;
+                context.cache_timeframe = true;
+                context.genetic_search_param(pop, gen, cm);
+                let balance = context
+                    .top
+                    .lock()
+                    .iter()
+                    .map(|x| OrderedFloat(x.balance))
+                    .max()
+                    .unwrap()
+                    .0;
+                let time = now.elapsed().as_secs_f32();
+                balances.push(balance);
+                times.push(time);
+                efficiencies.push(balance / time);
+                plot::plot_values(&format!("{} balances", kind), &balances)?;
+                plot::plot_values(&format!("{} times", kind), &times)?;
+                plot::plot_values(&format!("{} efficiencies", kind), &efficiencies)?;
+                plot::save_hist(&kind, &context.histogram.lock(), context.bucket_size).unwrap();
+                plot::save_pairs(&kind, &mut *context.top.lock()).unwrap();
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn ga_reset() -> Result<()> {
+    let mut balances = Vec::new();
+    let mut times = Vec::new();
+    let mut efficiencies = Vec::new();
+    let kind = format!("ga reset");
+    let total = Instant::now();
+    // let kind = format!("gafull {pop}pop");
+    // 21 000 exec (700pop, 30gen) to find max and took 7.5s
+    for _ in (0..4) {
+        let now = Instant::now();
+        let mut context = Context::new(50).await?;
+        context.n_shards = 1;
+        context.cache_timeframe = true;
+        context.genetic_search_param(50, 100, 1.);
+        let balance = context
+            .top
+            .lock()
+            .iter()
+            .map(|x| OrderedFloat(x.balance))
+            .max()
+            .unwrap()
+            .0;
+        let time = now.elapsed().as_secs_f32();
+        balances.push(balance);
+        times.push(time);
+        efficiencies.push(balance / time);
+        plot::plot_values(&format!("{} balances", kind), &balances)?;
+        plot::plot_values(&format!("{} times", kind), &times)?;
+        plot::plot_values(&format!("{} efficiencies", kind), &efficiencies)?;
+        plot::save_hist(&kind, &context.histogram.lock(), context.bucket_size).unwrap();
+        plot::save_pairs(&kind, &mut *context.top.lock()).unwrap();
+        println!("elapsed: {}s", total.elapsed().as_secs_f32());
+        println!(
+            "max: {}",
+            balances.iter().map(|x| OrderedFloat(*x)).max().unwrap()
+        );
+    }
+    Ok(())
+}
+
+async fn hybrid() -> Result<()> {
+    for bayes_iter in (5..15).step_by(1) {
+        for pop in (10..100).step_by(10) {
+            let mut balances = Vec::new();
+            let mut times = Vec::new();
+            let mut efficiencies = Vec::new();
+            let kind = format!("hybrid {bayes_iter}biter {pop}pop");
+            for gen in (100..1000).step_by(10) {
+                let now = Instant::now();
+                let mut context = Context::new(50).await?;
+                context.n_shards = 1;
+                context.cache_timeframe = true;
+                context.hybrid_search(bayes_iter, pop, gen);
+                let balance = context
+                    .top
+                    .lock()
+                    .iter()
+                    .map(|x| OrderedFloat(x.balance))
+                    .max()
+                    .unwrap()
+                    .0;
+                let time = now.elapsed().as_secs_f32();
+                balances.push(balance);
+                times.push(time);
+                efficiencies.push(balance / time);
+                plot::save_hist(&kind, &context.histogram.lock(), context.bucket_size).unwrap();
+                plot::save_pairs(&kind, &mut *context.top.lock()).unwrap();
+            }
+            plot::plot_values(&format!("{} balances", kind), &balances)?;
+            plot::plot_values(&format!("{} times", kind), &times)?;
+            plot::plot_values(&format!("{} efficiencies", kind), &efficiencies)?;
+        }
+    }
+    Ok(())
+}
+// GA 1000pop 1000gen 567.4214 502.13174s
+// 10x GA 100pop 1000gen 567.4214 664s
+//
+// GA 1000pop 100gen 743.23956 653.5391s
+// 10x GA 100pop 100gen 567.4214 709.323465s
+//
+// GA 1000pop 10gen 368.3305 174.77046s
+// 10x GA 100pop 10gen 470.95593 237.1908s
+//
+// 10x GA 10pop 100gen 309.9151 196.9258s
+// 5x GA 20pop 100gen 557.80023 127.10781s
+// 2x GA 50pop 100gen 557.80023 71.84006s
+// 4x GA 50pop 100gen 470.95593 197.83853s
+
+// Particle swarm optimization 1000pop 100gen,602.05066,2409.8833
+// Particle swarm optimization 100pop 100gen, 339.88666,169.52504
+// Particle swarm optimization 10pop 100gen,  82.14218, 25.662916
+// Artifficial bee colony,257.097,11514.3888
+// Differential evoulution 1000pop 100gen,5.6125264,48.886547
+// Simulated anealing 10000temp,  76.58476, 1820.3606
+// Tree-structured parzen estimator 4000evals 0.003125gamma 32candidates, 627.09513,114.43765
+// Tree-structured parzen estimator 8000evals 0.003125gamma 128candidates,665.45612,727.017
+// Genetic algorithm (CMA-ES) 1000pop 100gen, 567.4214, 592.9899
+
+// GA 1000pop 1000gen 567.4214 502.13174s
+// 10x GA 100pop 1000gen 567.4214 664s
+//
+// GA 1000pop 100gen 743.23956 653.5391s
+// 10x GA 100pop 100gen 567.4214 709.323465s
+//
+// GA 1000pop 10gen 368.3305 174.77046s
+// 10x GA 100pop 10gen 470.95593 237.1908s
+//
+// 10x GA 10pop 100gen 309.9151 196.9258s
+// 5x GA 20pop 100gen 557.80023 127.10781s
+// 2x GA 50pop 100gen 557.80023 71.84006s
+// 4x GA 50pop 100gen 470.95593 197.83853s
+
+// GA 1000pop 100gen 567.4214 592.9899s
+// PSO 1000pop 100gen 602.05066 2409.8833s
+// PSO 1000pop 10gen 197.084005	350.897128
+// PSO 100pop 100gen 339.88666 169.52504s
+// PSO 10pop 100gen 82.14218 25.662916s
+// ABC 257.097 11514.3888s
+// DE 1000pop 100gen 5.6125264 48.886547s
+// SA 10000temp 76.58476 1820.3606s
+// SPSA - gets stuck on the first local optimum
+// TPE 100evals 73.47685 8.062624s
+// TPE 1000evals 249.97662 29.690142s
+// TPE 10000evals 249.97662 423.43698s
+//
+// TPE 1000evals 0.00625gamma 24candidates 200.8046 30.693218s
+// TPE 1000evals 0.0125gamma 24candidates 312.6384 24.975275s
+// TPE 1000evals 0.025gamma 24candidates 679.58966 22.191572s
+// TPE 1000evals 0.05gamma 24candidates 230.124 34.265095s
+// TPE 1000evals 0.1gamma 24candidates 225.19772 17.825485s
+// TPE 1000evals 0.2gamma 24candidates 205.03854 20.925991s
+// TPE 1000evals 0.4gamma 24candidates 120.42607 16.769957s
+// TPE 10000evals 0.05gamma 24candidates 274.07288 330.19687s
+// TPE 10000evals 0.025gamma 24candidates 255.76738 535.9736s
+//
+//
+
+//  251.656573
+// 30.930572
+//  463.064125
+// 84.609797
+
+//  608.970648
+// 481.192813
+
+//  444.806263
+// 163.414627
+
+//  500.13849
+// 170.499122
+
+//  657.84603
+// 319.305018
+// 12 candidates
+// [3240, 22, 19, 40]: 341.5089
+// 18.400753s
+// [2460, 99, 75, 57]: 76.78088
+// 26.349583s
+// [3420, 21, 19, 39]: 487.2926
+// 27.137346s
+
+// 32 candidates
+// [2640, 28, 22, 43]: 517.40356
+// 27.783161s
+// [3240, 23, 19, 37]: 525.1039
+// 26.155014s
+// [3540, 23, 21, 44]: 412.11536
+// 26.247795s
+// [2100, 40, 25, 48]: 301.10886
+// 31.425611s
+
+// 64 candidates
+//[3600, 23, 20, 44]: 537.59247
+// 26.842484s
+// [3000, 12, 12, 36]: 649.1493
+// 33.101307s
+// [3060, 99, 74, 53]: 110.3755
+// 29.463703s
+// [3540, 23, 19, 44]: 387.49564
+// 29.593786s
+
+// 2000evals 0.025gamma 64candidates
+// [2340, 30, 22, 45]: 381.81024
+// 55.963127s
+// [3000, 58, 80, 42]: 81.600395
+// 57.85085s
+// [3240, 23, 19, 38]: 743.23956
+// 49.469284s
+// [3600, 23, 20, 44]: 537.59247
+// 50.53632s
+
+// 2000evals 0.025gamma 128candidates
+// [2820, 25, 20, 39]: 567.4214
+// 78.03063s
+// [2400, 10, 9, 83]: 379.93893
+// 81.723976s
+// [2280, 26, 17, 34]: 302.5002
+// 71.65978s
+// [3600, 21, 21, 37]: 679.58966
+// 67.97907s
+//
+// 2000evals 0.025gamma 256candidates
+// [2640, 25, 22, 41]: 470.95593
+// 124.565475s
+// [2340, 30, 22, 45]: 381.81024
+// 129.34477s
+// [2400, 28, 22, 75]: 340.35742
+// 129.89351s
+// [2340, 30, 22, 45]: 381.81024
+// 129.24559s
+
+// 2000evals 0.0125gamma 128candidates
+// [3240, 22, 20, 39]: 481.6045
+// 86.745445s
+// [3600, 21, 21, 37]: 679.58966
+// 87.557274s
+// [2280, 26, 17, 33]: 271.85858
+// 91.6182s
+// [3600, 19, 17, 39]: 613.6229
+// 86.711296s
+//
+// 2000evals 0.00625gamma 128candidates
+// [3540, 19, 20, 41]: 342.833
+// 90.18277s
+// [1800, 49, 27, 49]: 390.54007
+// 103.543465s
+// [3000, 12, 9, 37]: 294.94244
+// 91.42455s
+// [1140, 65, 29, 45]: 193.05354
+// 106.9341s
+//
+// 2000evals 0.00625gamma 256candidates
+// [1800, 37, 22, 41]: 375.23178
+// 132.53818s
+// [3600, 19, 17, 74]: 238.68999
+// 121.12363s
+// [3600, 19, 17, 39]: 613.6229
+// 122.223946s
+// [3000, 26, 20, 68]: 316.1892
+// 139.30319s
+//
+// 2000evals 0.0125gamma 64candidates
+// [2700, 13, 11, 84]: 309.9541
+// 70.79595s
+// [1740, 42, 24, 41]: 349.9514
+// 81.46103s
+// [1500, 22, 18, 78]: 334.54794
+// 85.98861s
+// [660, 90, 30, 40]: 203.54913
+// 109.502426s
+//
+// 4000evals 0.0125gamma 2candidates
+// [3600, 19, 17, 39]: 613.6229
+// 67.89445s
+// [2640, 28, 22, 42]: 557.80023
+// 81.03708s
+// [1740, 42, 25, 41]: 421.93964
+// 93.086624s
+// [2100, 42, 24, 37]: 411.12827
+// 95.85583s
+
+// 8000evals 0.0125gamma 2candidates
+// [1080, 67, 30, 45]: 299.94897
+// 248.0841s
+// [3240, 23, 19, 38]: 743.23956
+// 126.77406s
+// [2280, 17, 13, 53]: 311.84467
+// 151.53877s
+// [2820, 25, 20, 39]: 567.4214
+// 145.72461s
+
+// 8000evals 0.00625gamma 2candidates
+// [2640, 28, 22, 42]: 557.80023
+// 157.19131s
+// [2820, 25, 20, 39]: 567.4214
+// 155.96388s
+// [3600, 21, 21, 37]: 679.58966
+// 142.01064s
+// [3600, 19, 17, 39]: 613.6229
+// 141.84483s
+
+// 8000evals 0.003125gamma 2candidates
+// [3240, 23, 19, 38]: 743.23956
+// 137.67564s
+// [2640, 28, 22, 42]: 557.80023
+// 159.60556s
+// [3600, 19, 17, 39]: 613.6229
+// 137.50154s
+// [3600, 21, 21, 37]: 679.58966
+// 143.87297s
+//
+//
+// 8000evals 0.001563gamma 2candidates
+// [2640, 25, 21, 41]: 490.45026
+// 149.76224s
+// [3000, 12, 10, 36]: 509.67245
+// 151.88045s
+// [3600, 21, 21, 37]: 679.58966
+// 183.42311s
+// [2700, 28, 24, 43]: 366.12506
+// 200.58679s
+
+// 8000evals 0.003125gamma 20candidates
+// [3600, 21, 21, 37]: 679.58966
+// 226.83656s
+// [3540, 19, 22, 39]: 599.8812
+// 227.18007s
+// [1800, 37, 22, 41]: 375.23178
+// 280.05328s
+// [3600, 21, 21, 37]: 679.58966
+// 230.41289s
+//
+// 8x 1000evals 0.003125gamma 20candidates
+// [2640, 18, 19, 48]: 221.12245
+// 179.33884s
+// [3540, 7, 2, 18]: 357.82236
+// 195.99756s
+// [2820, 25, 20, 41]: 442.64798
+// 199.55911s
+// [2640, 28, 25, 43]: 293.9995
+// 198.59297s
+//
+// 8000evals 0.003125gamma 64candidates
+// [3600, 21, 21, 37]: 679.58966
+// 435.2517s
+// [3600, 21, 21, 37]: 679.58966
+// 440.4662s
+// [2820, 25, 20, 39]: 567.4214
+// 456.72156s
+// [3600, 21, 21, 37]: 679.58966
+// 454.78314s
+//
+// 8000evals 0.003125gamma 128candidates
+// [3600, 21, 21, 37]: 679.58966
+// 718.16284s
+// [2880, 8, 2, 89]: 623.0555
+// 752.2478s
+// [3600, 21, 21, 37]: 679.58966
+// 753.6529s
+// [3600, 21, 21, 37]: 679.58966
+// 727.017s
+//
+// 4000evals 0.003125gamma 128candidates
+// [2640, 28, 22, 41]: 438.71878
+// 224.72762s
+// [3000, 15, 13, 27]: 354.2682
+// 227.54424s
+// [2220, 45, 26, 41]: 375.89032
+// 233.90329s
+// [3420, 21, 18, 39]: 409.54993
+// 226.40895s
+//
+// 4000evals 0.003125gamma 64candidates
+// [3600, 19, 17, 39]: 613.6229
+// 151.15955s
+// [3600, 23, 20, 44]: 537.59247
+// 158.06946s
+// [3600, 19, 17, 39]: 613.6229
+// 151.5036s
+// [3600, 19, 17, 39]: 613.6229
+// 158.0182s
+//
+//
+// 2000evals 0.003125gamma 64candidates
+// [2280, 20, 15, 47]: 202.01256
+// 79.18116s
+// [3300, 26, 24, 46]: 206.31342
+// 80.27299s
+// [2160, 38, 25, 46]: 258.57364
+// 76.58972s
+// [2640, 31, 21, 65]: 214.12733
+// 76.35146s
+//
+// 2000evals 0.003125gamma 32candidates
+// [3240, 22, 20, 38]: 320.00006
+// 64.1906s
+// [3540, 19, 22, 37]: 327.3361
+// 65.864265s
+// [3600, 23, 22, 44]: 401.46518
+// 65.46139s
+// [3600, 31, 24, 33]: 399.81863
+// 65.77226s
+//
+// 4000evals 0.003125gamma 32candidates
+// [3600, 21, 21, 37]: 679.58966
+// 117.82981s
+// [3240, 23, 19, 38]: 743.23956
+// 113.57553s
+// [3600, 19, 17, 39]: 613.6229
+// 114.43765s
+// [3240, 22, 21, 39]: 471.9284
+// 115.19617s
+//
+// 32pop 125gen 0.003125gamma 32candidates
+// [3240, 22, 20, 39]: 481.6045
+// 110.005905s
+// [2100, 32, 23, 42]: 375.2586
+// 121.73573s
+// [3120, 25, 20, 44]: 331.37195
+// 131.06596s
+// [2220, 45, 26, 41]: 375.89032
+// 128.2518s
+//
+// 32pop 250gen 0.003125gamma 32candidates
+// [3600, 19, 16, 39]: 525.7653
+// 264.16208s
+// [3600, 11, 6, 19]: 475.63037
+// 268.03653s
+// [3600, 23, 20, 44]: 537.59247
+// 284.8727s
+// [3600, 19, 17, 39]: 613.6229
+// 289.70865s
+//
+// 268.03653s
+// tpe is 10x more expensive than a sum total of function evaluations
 #[tokio::main]
 async fn main() -> Result<()> {
+    // GA is 6x more expensive than a sum total of function evaluations
+    // GA 100pop 100gen
+    // [2640, 28, 22, 42]: 557.80023
+    // 55.4379s
+    // [2640, 28, 22, 42]: 557.80023
+    // 105.6305s
+    // [2640, 28, 22, 42]: 557.80023
+    // 77.30985s
+    // [1800, 49, 27, 49]: 390.54007
+    // 65.591896s
+    //
+    // GA 100pop 1000gen
+    // [2640, 28, 22, 42]: 557.80023
+    // 75.868324so[2640, 28, 22, 42]: 557.80023
+    // 79.98104s
+    // [2640, 28, 22, 42]: 557.80023
+    // 71.10687s
+    // [2280, 38, 24, 44]: 348.3299
+    // 82.927124s
+    // [2220, 32, 23, 42]: 292.50613
+    // 84.963295s
+    // [2640, 28, 22, 42]: 557.80023
+    // 74.04916s
+    // [3420, 21, 19, 39]: 487.2926
+    // 78.485634s
+    // [2640, 28, 22, 42]: 557.80023
+    // 70.87758s
+    //
+    // GA 1000pop 1000gen
+    // [2100, 42, 25, 37]: 602.05066
+    // 414.1432s
+    // [2820, 25, 20, 39]: 567.4214
+    // 476.13626s
+    // [2820, 25, 20, 39]: 567.4214
+    // 510.0355s
+    // [2820, 25, 20, 39]: 567.4214
+    // 558.3063s
+    // [2820, 25, 20, 39]: 567.4214
+    // 554.4545s
+    // [2820, 25, 20, 39]: 567.4214
+    // 653.3671s
+    // [2820, 25, 20, 39]: 567.4214
+    // 587.31305s
+    // [3240, 23, 19, 38]: 743.23956
+    // 528.2845s
+    //
+    // GA 10pop 1000gen
+    // [2220, 30, 21, 45]: 291.96024
+    // 28.462097s
+    // [1380, 73, 80, 41]: 54.082283
+    // 29.548927s
+    // [2220, 78, 32, 49]: 195.95404
+    // 28.402084s
+    // [2820, 60, 80, 43]: 76.57663
+    // 29.134037s
+    //
+    // GA 100pop 1000gen 0.5learning_rate
+    // [3240, 23, 19, 38]: 743.23956
+    // 69.873764s
+    // [1860, 43, 25, 64]: 222.7781
+    // 107.431595s
+    // [2820, 26, 21, 41]: 388.59912
+    // 76.09029s
+    // [2640, 28, 22, 41]: 438.71878
+    // 73.24185s
+    //
+    // GA 100pop 1000gen 0.25learning_rate
+    // [3240, 23, 19, 38]: 743.23956
+    // 74.72472s
+    // [2160, 38, 22, 46]: 332.0676
+    // 91.30245s
+    // [2640, 28, 22, 42]: 557.80023
+    // 65.61754s
+    // [1740, 42, 25, 41]: 421.93964
+    // 95.89946s
+    //
+    // GA 100pop 1000gen 0.125learning_rate
+    // [2640, 28, 22, 42]: 557.80023
+    // 63.014126s
+    // [2640, 28, 21, 41]: 333.81958
+    // 79.97703s
+    // [2100, 42, 24, 37]: 411.12827
+    // 76.25659s
+    // [2340, 30, 22, 45]: 381.81024
+    // 77.43056s
+
     unsafe {
-        config::load("config.yaml");
+        config::load("config.yaml")?;
     }
+    //    env_logger::init();
+    dbg!(&CONFIG.cache_dir);
+
+    warn!("This is an example message.");
+    // grid search 343.2247s on 2000h
+    // 4116
+
+    // hybrid().await?;
+    // random().await?;
+    // ga().await?;
+    // ga_reset().await?;
+    // return Ok(());
+    // bayes().await?;
+    let mut context = Context::new(50).await?;
+    let now = Instant::now();
+    context.n_shards = 1;
+    context.cache_timeframe = true;
+    // context.pso();
+    // context.tpe();
+    // first half optimized
+    // context.backtest_plot(3000, 12, 12., 36.);
+    context.backtest_plot(3600, 21, 21., 37.);
+    // context.nelder_mead();
+    // context.genetic_search_param(10, 1000, 1.);
+    // context.bayes_search(30000);
+    // context.genetic_search_param(700, 30, 1.);
+    // context.params.lock().iter().for_each(|x| {
+    //     println!("{}: {}", x.0, x.1.len());
+    // });
+    // context.grid_search();
+    // plot::plot_xy("grid hist", &values).unwrap();
+    context.summary();
+
+    println!("{}s", now.elapsed().as_secs_f32());
+    return Ok(());
     //    let mut context = Context::new().await?;
     //    for i in 0..100 {
     //        dbg!(context.backtest(3540, 19, 21., 40.));
@@ -50,18 +695,80 @@ async fn main() -> Result<()> {
     //        //    //    mapper.map().await?;
     //        return Ok(());
 
-    let mut context = Context::new().await?;
+    // [sparring/src/context.rs:222] &account = Account {
+    //     balance: 743.23956,
+    //     entry_price: 10288.5,
+    //     max_balance: 854.7482,
+    //     max_drawdown: 0.34998852,
+    //     trade_bar: 58793,
+    //     n_trades: 342,
+    //     taker_fee: 0.00075,
+    //     maker_fee: 0.0,
+    //     slippage: 0.00075,
+    // }
+    // [sparring/src/context.rs:169] &account = Account16 {
+    //     balance: 139.625,
+    //     entry_price: 10288.0,
+    //     max_balance: 139.875,
+    //     max_drawdown: 0.46923828,
+    //     trade_bar: 58728,
+    //     n_trades: 251,
+    //     taker_fee: 0.00075006485,
+    //     maker_fee: 0.0,
+    //     slippage: 0.00075006485,
+    // }
+    // with price that starts at 1
+    // [sparring/src/context.rs:246] &account = Account {
+    //     balance: 743.2394,
+    //     entry_price: 44.175613,
+    //     max_balance: 854.748,
+    //     max_drawdown: 0.34998882,
+    //     trade_bar: 58793,
+    //     n_trades: 342,
+    //     taker_fee: 0.00075,
+    //     maker_fee: 0.0,
+    //     slippage: 0.00075,
+    // }
+    // [sparring/src/context.rs:182] &account = Account16 {
+    //     balance: 624.5,
+    //     entry_price: 44.1875,
+    //     max_balance: 635.0,
+    //     max_drawdown: 0.33789063,
+    //     trade_bar: 58791,
+    //     n_trades: 343,
+    //     taker_fee: 0.00075006485,
+    //     maker_fee: 0.0,
+    //     slippage: 0.00075006485,
+    // }
+    let mut context = Context::new(10).await?;
+    // context.backtest(60 * 60, 14, 70., 30.);
+    // // context.backtest16(3240, 23, 19., 38.);
+    // return Ok(());
+    context.n_shards = 1;
     context.cache_timeframe = true;
-    context.sharded_genetic_shearch(10);
-    context.summary();
+    // let now = Instant::now();
+    // context.genetic_search();
+    // let elapsed_ns = now.elapsed().as_nanos() as u64;
+    // let compute_ns = context.time_taken_ns.load(Ordering::SeqCst);
+    // println!(
+    //     "total: {} ms, compute: {} ms, ga: {} ms",
+    //     elapsed_ns / 1000 / 1000,
+    //     compute_ns / 1000 / 1000,
+    //     (elapsed_ns - compute_ns) / 1000 / 1000,
+    // );
+    // context.grid_search();
+    // context.sharded_genetic_shearch(10);
     //    context.hybrid_search();
 
     //    dbg!(context.backtest(2640, 28, 22., 42.));
-    //    context.bayes_search();
+    let now = Instant::now();
+    // context.grid_search();
+    // context.bayes_search();
     //    context.random_search();
     //    context.genetic_search();
     //    context.hybrid_search();
-    //    context.summary();
+    context.summary();
+    println!("total: {}s", now.elapsed().as_secs_f32());
     return Ok(());
     //    let mut changed_hlcvs = vec![];
     //    let hlcvs;
@@ -268,6 +975,7 @@ impl RsiState {
         let mut rs = self.avg_gain / self.avg_loss;
         rs = if rs.is_nan() { 1. } else { rs };
         let rsi = 100. - (100. / (1. + rs));
+        // println!("{} {} {} {}", self.avg_gain, self.avg_loss, price, rsi);
         // we could clamp the value between 0 and 100, no need to bother, happens rarely
         //        assert!(rsi >= 0.);
         //        assert!(rsi <= 100.);
